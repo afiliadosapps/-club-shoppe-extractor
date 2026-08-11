@@ -1,26 +1,3 @@
-/**
- * ============================================================
- * CopiarLink - Extrator próprio (automação de navegador)
- * ============================================================
- *
- * Abre uma página pública da Shopee usando Puppeteer e observa
- * as respostas de rede geradas pelo navegador para encontrar
- * uma URL de vídeo.
- *
- * ENDPOINT:
- *   GET /api/extract?url=<link do produto da Shopee>
- *
- * RESPOSTA:
- *   {
- *     "success": true,
- *     "video_url": "...",
- *     "thumbnail": "...",
- *     "title": "..."
- *   }
- *
- * ============================================================
- */
-
 const express = require('express');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
@@ -33,10 +10,11 @@ const VIDEO_WAIT_MS = 12000;
 const app = express();
 
 app.use(cors());
+app.use(express.json());
 
 
 // ============================================================
-// DOMÍNIOS ACEITOS COMO LINK DE ENTRADA
+// DOMÍNIOS DE ENTRADA
 // ============================================================
 
 const ALLOWED_INPUT_HOSTS = [
@@ -47,21 +25,17 @@ const ALLOWED_INPUT_HOSTS = [
 
 
 // ============================================================
-// DOMÍNIO DO VÍDEO
+// DOMÍNIOS DE VÍDEO
 // ============================================================
 
 const VIDEO_HOST_PATTERN = /susercontent\.com$/i;
 
-
-// ============================================================
-// FORMATOS DE VÍDEO
-// ============================================================
-
-const VIDEO_URL_PATTERN = /\.(mp4|m3u8)(\?|$)/i;
+const VIDEO_URL_PATTERN =
+  /\.(mp4|m3u8)(\?|$)/i;
 
 
 // ============================================================
-// VALIDA O LINK DA SHOPEE
+// VALIDA URL
 // ============================================================
 
 function isAllowedInputUrl(rawUrl) {
@@ -72,7 +46,9 @@ function isAllowedInputUrl(rawUrl) {
       return false;
     }
 
-    return ALLOWED_INPUT_HOSTS.some((re) => re.test(hostname));
+    return ALLOWED_INPUT_HOSTS.some((re) =>
+      re.test(hostname)
+    );
 
   } catch {
     return false;
@@ -81,7 +57,146 @@ function isAllowedInputUrl(rawUrl) {
 
 
 // ============================================================
-// NAVEGADOR REUTILIZADO
+// CONVERTE OBJETOS ENCONTRADOS NAS RESPOSTAS
+// ============================================================
+
+function inspectObject(obj, result) {
+
+  if (!obj || typeof obj !== 'object') {
+    return;
+  }
+
+
+  // clean_url
+  if (
+    typeof obj.clean_url === 'string' &&
+    obj.clean_url.length > 0
+  ) {
+
+    result.clean_url = obj.clean_url;
+
+  }
+
+
+  // video_url
+  if (
+    typeof obj.video_url === 'string' &&
+    obj.video_url.length > 0
+  ) {
+
+    result.video_url = obj.video_url;
+
+  }
+
+
+  // thumbnail
+  if (
+    typeof obj.thumbnail === 'string' &&
+    obj.thumbnail.length > 0
+  ) {
+
+    result.thumbnail = obj.thumbnail;
+
+  }
+
+
+  // title
+  if (
+    typeof obj.title === 'string' &&
+    obj.title.length > 0
+  ) {
+
+    result.title = obj.title;
+
+  }
+
+
+  // download_id
+  if (
+    obj.download_id !== undefined
+  ) {
+
+    result.download_id = obj.download_id;
+
+  }
+
+
+  // Procura também dentro de objetos aninhados
+  for (const value of Object.values(obj)) {
+
+    if (
+      value &&
+      typeof value === 'object'
+    ) {
+
+      inspectObject(value, result);
+
+    }
+
+  }
+
+}
+
+
+// ============================================================
+// TENTA LER JSON DE UMA RESPONSE
+// ============================================================
+
+async function inspectResponse(response, result) {
+
+  try {
+
+    const contentType =
+      response.headers()['content-type'] || '';
+
+    if (
+      !contentType.includes('json') &&
+      !contentType.includes('javascript') &&
+      !contentType.includes('text')
+    ) {
+
+      return;
+
+    }
+
+
+    const text = await response.text();
+
+    if (!text) {
+      return;
+    }
+
+
+    // Limita para não tentar interpretar arquivos gigantes
+    if (text.length > 5 * 1024 * 1024) {
+      return;
+    }
+
+
+    let data;
+
+    try {
+
+      data = JSON.parse(text);
+
+    } catch {
+
+      return;
+
+    }
+
+
+    inspectObject(data, result);
+
+  } catch {
+    // Algumas responses não podem ser lidas.
+  }
+
+}
+
+
+// ============================================================
+// NAVEGADOR
 // ============================================================
 
 let browserPromise = null;
@@ -110,66 +225,126 @@ function getBrowser() {
 
 
 // ============================================================
-// EXTRAI O VÍDEO
+// EXTRAÇÃO
 // ============================================================
 
 async function extractVideoFromProductPage(productUrl) {
 
   const browser = await getBrowser();
 
-  const context = await browser.createBrowserContext();
+  const context =
+    await browser.createBrowserContext();
 
-  const page = await context.newPage();
+  const page =
+    await context.newPage();
 
-  let foundVideoUrl = null;
 
-  let resolveVideoFound;
+  const result = {
 
-  const videoFoundPromise = new Promise((resolve) => {
-    resolveVideoFound = resolve;
-  });
+    video_url: null,
+
+    clean_url: null,
+
+    thumbnail: null,
+
+    title: null,
+
+    download_id: null,
+
+  };
+
+
+  let resolveFound;
+
+  const foundPromise =
+    new Promise((resolve) => {
+
+      resolveFound = resolve;
+
+    });
 
 
   // ==========================================================
-  // ESCUTA AS RESPOSTAS DA REDE
+  // OBSERVA TODAS AS RESPONSES
   // ==========================================================
 
-  page.on('response', (response) => {
+  page.on('response', async (response) => {
 
-    if (foundVideoUrl) {
-      return;
-    }
-
-    const respUrl = response.url();
-
-    try {
-
-      const parsedUrl = new URL(respUrl);
-
-      const isVideoHost =
-        VIDEO_HOST_PATTERN.test(parsedUrl.hostname);
-
-      const isVideoFile =
-        VIDEO_URL_PATTERN.test(respUrl);
+    const url = response.url();
 
 
-      if (isVideoHost && isVideoFile) {
+    // --------------------------------------------------------
+    // 1. Procura JSON que contenha clean_url
+    // --------------------------------------------------------
 
-        foundVideoUrl = respUrl;
+    await inspectResponse(
+      response,
+      result
+    );
 
-        console.log('');
-        console.log('==========================================');
-        console.log('VÍDEO ENCONTRADO');
-        console.log('==========================================');
-        console.log(foundVideoUrl);
-        console.log('==========================================');
-        console.log('');
 
-        resolveVideoFound();
+    // --------------------------------------------------------
+    // 2. Procura diretamente uma URL de vídeo
+    // --------------------------------------------------------
+
+    if (!result.video_url) {
+
+      try {
+
+        const parsed =
+          new URL(url);
+
+        const isVideoHost =
+          VIDEO_HOST_PATTERN.test(
+            parsed.hostname
+          );
+
+        const isVideo =
+          VIDEO_URL_PATTERN.test(url);
+
+
+        if (
+          isVideoHost &&
+          isVideo
+        ) {
+
+          result.video_url = url;
+
+          console.log('');
+          console.log(
+            'VÍDEO ENCONTRADO:'
+          );
+          console.log(url);
+          console.log('');
+
+          resolveFound();
+
+        }
+
+      } catch {
+        // Ignora URL inválida
       }
 
-    } catch {
-      // Ignora URLs inválidas
+    }
+
+
+    // --------------------------------------------------------
+    // 3. Se achou clean_url, já temos a informação principal
+    // --------------------------------------------------------
+
+    if (result.clean_url) {
+
+      console.log('');
+      console.log(
+        'CLEAN_URL ENCONTRADA:'
+      );
+      console.log(
+        result.clean_url
+      );
+      console.log('');
+
+      resolveFound();
+
     }
 
   });
@@ -178,7 +353,7 @@ async function extractVideoFromProductPage(productUrl) {
   try {
 
     // ========================================================
-    // CONFIGURA O NAVEGADOR
+    // CONFIGURA NAVEGADOR
     // ========================================================
 
     await page.setUserAgent(
@@ -193,17 +368,17 @@ async function extractVideoFromProductPage(productUrl) {
 
 
     // ========================================================
-    // INTERCEPTAÇÃO DE REQUISIÇÕES
+    // INTERCEPTAÇÃO
     // ========================================================
 
     await page.setRequestInterception(true);
 
+
     page.on('request', (req) => {
 
-      const type = req.resourceType();
+      const type =
+        req.resourceType();
 
-      // Bloqueia somente recursos pesados que não precisamos.
-      // Mantemos media, xhr e fetch funcionando.
 
       if (
         type === 'font' ||
@@ -222,15 +397,14 @@ async function extractVideoFromProductPage(productUrl) {
 
 
     // ========================================================
-    // ABRE A PÁGINA
+    // ABRE PRODUTO
     // ========================================================
 
     console.log('');
-    console.log('==========================================');
-    console.log('ABRINDO PRODUTO');
-    console.log('==========================================');
+    console.log(
+      'ABRINDO PRODUTO:'
+    );
     console.log(productUrl);
-    console.log('==========================================');
     console.log('');
 
 
@@ -244,108 +418,143 @@ async function extractVideoFromProductPage(productUrl) {
 
 
     // ========================================================
-    // ESPERA O VÍDEO
+    // ESPERA MAIS UM POUCO
     // ========================================================
 
-    if (!foundVideoUrl) {
+    await Promise.race([
 
-      console.log('Vídeo ainda não encontrado.');
-      console.log('Aguardando mais alguns segundos...');
+      foundPromise,
+
+      new Promise((resolve) => {
+
+        setTimeout(
+          resolve,
+          VIDEO_WAIT_MS
+        );
+
+      }),
+
+    ]);
 
 
-      await Promise.race([
+    // ========================================================
+    // TÍTULO / THUMBNAIL DO HTML
+    // ========================================================
 
-        videoFoundPromise,
+    const pageData =
+      await page.evaluate(() => {
 
-        new Promise((resolve) => {
-          setTimeout(resolve, VIDEO_WAIT_MS);
-        }),
+        const ogTitle =
+          document.querySelector(
+            'meta[property="og:title"]'
+          )?.content;
 
-      ]);
+        const ogImage =
+          document.querySelector(
+            'meta[property="og:image"]'
+          )?.content;
 
+
+        return {
+
+          title:
+            ogTitle ||
+            document.title ||
+            null,
+
+          thumbnail:
+            ogImage ||
+            null,
+
+        };
+
+      });
+
+
+    if (!result.title) {
+      result.title =
+        pageData.title;
+    }
+
+
+    if (!result.thumbnail) {
+      result.thumbnail =
+        pageData.thumbnail;
     }
 
 
     // ========================================================
-    // PEGA TÍTULO E THUMBNAIL
+    // MOSTRA O RESULTADO
     // ========================================================
 
-    const { title, thumbnail } = await page.evaluate(() => {
+    console.log('');
+    console.log(
+      '=========================================='
+    );
+    console.log(
+      'RESULTADO'
+    );
+    console.log(
+      '=========================================='
+    );
 
-      const ogTitle =
-        document.querySelector(
-          'meta[property="og:title"]'
-        )?.content;
+    console.log(
+      'video_url:',
+      result.video_url
+    );
 
-      const ogImage =
-        document.querySelector(
-          'meta[property="og:image"]'
-        )?.content;
+    console.log(
+      'clean_url:',
+      result.clean_url
+    );
 
+    console.log(
+      'thumbnail:',
+      result.thumbnail
+    );
 
-      return {
+    console.log(
+      'title:',
+      result.title
+    );
 
-        title:
-          ogTitle ||
-          document.title ||
-          null,
-
-        thumbnail:
-          ogImage ||
-          null,
-
-      };
-
-    });
+    console.log(
+      '=========================================='
+    );
+    console.log('');
 
 
     // ========================================================
-    // SE ENCONTROU O VÍDEO
+    // RETORNA
     // ========================================================
 
-    if (foundVideoUrl) {
-
-      console.log('');
-      console.log('==========================================');
-      console.log('RESULTADO FINAL');
-      console.log('==========================================');
-
-      console.log('VIDEO ORIGINAL:');
-      console.log(foundVideoUrl);
-
-      console.log('');
-
-      console.log('A URL retornada é exatamente a URL');
-      console.log('que o navegador encontrou na rede.');
-
-      console.log('==========================================');
-      console.log('');
-
+    if (
+      result.video_url ||
+      result.clean_url
+    ) {
 
       return {
 
         success: true,
 
-        video_url: foundVideoUrl,
+        video_url:
+          result.video_url,
 
-        thumbnail,
+        clean_url:
+          result.clean_url,
 
-        title,
+        download_id:
+          result.download_id,
+
+        thumbnail:
+          result.thumbnail,
+
+        title:
+          result.title,
 
       };
 
     }
-
-
-    // ========================================================
-    // NÃO ENCONTROU
-    // ========================================================
-
-    console.log('');
-    console.log('==========================================');
-    console.log('NENHUM VÍDEO ENCONTRADO');
-    console.log('==========================================');
-    console.log('');
 
 
     return {
@@ -353,20 +562,17 @@ async function extractVideoFromProductPage(productUrl) {
       success: false,
 
       error:
-        'Não encontramos vídeo nesse produto (ou ele demorou demais para carregar).',
+        'Não encontramos o vídeo ou a informação clean_url.',
 
     };
 
 
   } catch (err) {
 
-    console.log('');
-    console.log('==========================================');
-    console.log('ERRO');
-    console.log('==========================================');
-    console.log(err.message);
-    console.log('==========================================');
-    console.log('');
+    console.log(
+      'ERRO:',
+      err.message
+    );
 
 
     return {
@@ -381,10 +587,6 @@ async function extractVideoFromProductPage(productUrl) {
 
 
   } finally {
-
-    // ========================================================
-    // FECHA A PÁGINA
-    // ========================================================
 
     await page
       .close()
@@ -401,143 +603,237 @@ async function extractVideoFromProductPage(productUrl) {
 
 
 // ============================================================
-// ENDPOINT /api/extract
+// /api/extract
 // ============================================================
 
-app.get('/api/extract', async (req, res) => {
+app.get(
+  '/api/extract',
+  async (req, res) => {
 
-  const productUrl = req.query.url;
+    const productUrl =
+      req.query.url;
 
 
-  // ==========================================================
-  // LINK NÃO INFORMADO
-  // ==========================================================
+    if (!productUrl) {
 
-  if (!productUrl) {
+      return res
+        .status(400)
+        .json({
 
-    return res
-      .status(400)
-      .json({
+          success: false,
 
-        success: false,
+          error:
+            'Parâmetro "url" ausente.',
 
-        error:
-          'Parâmetro "url" ausente.',
+        });
 
-      });
+    }
+
+
+    if (
+      !isAllowedInputUrl(productUrl)
+    ) {
+
+      return res
+        .status(400)
+        .json({
+
+          success: false,
+
+          error:
+            'Link inválido. Cole um link de produto da Shopee.',
+
+        });
+
+    }
+
+
+    try {
+
+      const result =
+        await extractVideoFromProductPage(
+          productUrl
+        );
+
+
+      return res
+        .status(
+          result.success
+            ? 200
+            : 422
+        )
+        .json(result);
+
+
+    } catch (err) {
+
+      return res
+        .status(500)
+        .json({
+
+          success: false,
+
+          error:
+            'Erro interno: ' +
+            err.message,
+
+        });
+
+    }
 
   }
+);
 
 
-  // ==========================================================
-  // LINK INVÁLIDO
-  // ==========================================================
+// ============================================================
+// /info.php
+//
+// Mantemos esse endereço porque era exatamente o formato
+// que apareceu no seu Network.
+// ============================================================
 
-  if (!isAllowedInputUrl(productUrl)) {
+app.get(
+  '/info.php',
+  async (req, res) => {
 
-    return res
-      .status(400)
-      .json({
+    const productUrl =
+      req.query.url;
 
-        success: false,
 
-        error:
-          'Link inválido. Cole um link de produto da Shopee.',
+    if (!productUrl) {
 
-      });
+      return res
+        .status(400)
+        .json({
+
+          success: false,
+
+          error:
+            'Parâmetro "url" ausente.',
+
+        });
+
+    }
+
+
+    if (
+      !isAllowedInputUrl(productUrl)
+    ) {
+
+      return res
+        .status(400)
+        .json({
+
+          success: false,
+
+          error:
+            'Link inválido.',
+
+        });
+
+    }
+
+
+    try {
+
+      const result =
+        await extractVideoFromProductPage(
+          productUrl
+        );
+
+
+      return res
+        .status(
+          result.success
+            ? 200
+            : 422
+        )
+        .json(result);
+
+
+    } catch (err) {
+
+      return res
+        .status(500)
+        .json({
+
+          success: false,
+
+          error:
+            err.message,
+
+        });
+
+    }
 
   }
+);
 
 
-  // ==========================================================
-  // EXECUTA EXTRAÇÃO
-  // ==========================================================
+// ============================================================
+// HEALTH
+// ============================================================
 
-  try {
+app.get(
+  '/health',
+  (_req, res) => {
 
-    const result =
-      await extractVideoFromProductPage(
-        productUrl
-      );
-
-
-    const status =
-      result.success
-        ? 200
-        : 422;
-
-
-    return res
-      .status(status)
-      .json(result);
-
-
-  } catch (err) {
-
-    return res
-      .status(500)
-      .json({
-
-        success: false,
-
-        error:
-          'Erro interno: ' +
-          err.message,
-
-      });
+    res.json({
+      ok: true,
+    });
 
   }
-
-});
-
-
-// ============================================================
-// HEALTH CHECK
-// ============================================================
-
-app.get('/health', (_req, res) => {
-
-  res.json({
-    ok: true,
-  });
-
-});
+);
 
 
 // ============================================================
-// INICIA SERVIDOR
+// INICIA
 // ============================================================
 
-app.listen(PORT, () => {
+app.listen(
+  PORT,
+  () => {
 
-  console.log('');
-  console.log('==========================================');
-  console.log('CopiarLink iniciado');
-  console.log('==========================================');
-  console.log(
-    `Servidor rodando na porta ${PORT}`
-  );
-  console.log('==========================================');
-  console.log('');
-
-});
-
-
-// ============================================================
-// FECHA O NAVEGADOR QUANDO O SERVIDOR ENCERRAR
-// ============================================================
-
-process.on('SIGTERM', async () => {
-
-  if (browserPromise) {
-
-    const browser =
-      await browserPromise;
-
-    await browser.close();
+    console.log('');
+    console.log(
+      '=========================================='
+    );
+    console.log(
+      'CopiarLink iniciado'
+    );
+    console.log(
+      '=========================================='
+    );
+    console.log(
+      `http://localhost:${PORT}`
+    );
+    console.log(
+      '=========================================='
+    );
+    console.log('');
 
   }
+);
 
-  process.exit(0);
 
-});
+// ============================================================
+// ENCERRAMENTO
+// ============================================================
+
+process.on(
+  'SIGTERM',
+  async () => {
+
+    if (browserPromise) {
+
+      const browser =
+        await browserPromise;
+
+      await browser.close();
+
+    }
+
+    process.exit(0);
+
+  }
+);
