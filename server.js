@@ -484,6 +484,67 @@ async function extractVideoFromProductPage(productUrl) {
 
 
     // ========================================================
+    // DIAGNÓSTICO
+    // ========================================================
+
+    console.log('');
+    console.log(
+      '========== DIAGNÓSTICO =========='
+    );
+
+    console.log(
+      'VIDEO ORIGINAL:',
+      result.video_url
+    );
+
+    console.log(
+      'CLEAN_URL RECEBIDA:',
+      result.clean_url
+    );
+
+
+    if (result.video_url) {
+
+      try {
+
+        const parsed =
+          new URL(result.video_url);
+
+        console.log(
+          'HOST:',
+          parsed.hostname
+        );
+
+        console.log(
+          'PATH:',
+          parsed.pathname
+        );
+
+        console.log(
+          'QUERY:',
+          parsed.search
+        );
+
+      } catch (err) {
+
+        console.log(
+          'Não foi possível analisar a URL:',
+          err.message
+        );
+
+      }
+
+    }
+
+
+    console.log(
+      '================================='
+    );
+
+    console.log('');
+
+
+    // ========================================================
     // MOSTRA O RESULTADO
     // ========================================================
 
@@ -687,9 +748,6 @@ app.get(
 
 // ============================================================
 // /info.php
-//
-// Mantemos esse endereço porque era exatamente o formato
-// que apareceu no seu Network.
 // ============================================================
 
 app.get(
