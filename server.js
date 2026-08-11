@@ -7,10 +7,10 @@
  *
  * Se alguma resposta da página fornecer:
  *
- *   {
- *     "video_url": "...mp4",
- *     "clean_url": "...mp4"
- *   }
+ * {
+ *   "video_url": "...mp4",
+ *   "clean_url": "...mp4"
+ * }
  *
  * o servidor preserva os dois valores.
  *
@@ -35,7 +35,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-
 // ============================================================
 // DOMÍNIOS DE ENTRADA
 // ============================================================
@@ -46,16 +45,13 @@ const ALLOWED_INPUT_HOSTS = [
   /(^|\.)shp\.ee$/i,
 ];
 
-
 // ============================================================
 // DOMÍNIO DO CDN DE VÍDEO
 // ============================================================
 
 const VIDEO_HOST_PATTERN = /susercontent\.com$/i;
 
-const VIDEO_URL_PATTERN =
-  /\.(mp4|m3u8)(\?|$)/i;
-
+const VIDEO_URL_PATTERN = /\.(mp4|m3u8)(\?|$)/i;
 
 // ============================================================
 // VALIDAÇÃO DO LINK DO PRODUTO
@@ -72,39 +68,31 @@ function isAllowedInputUrl(rawUrl) {
     return ALLOWED_INPUT_HOSTS.some((regex) =>
       regex.test(parsed.hostname)
     );
-
   } catch {
     return false;
   }
 }
-
 
 // ============================================================
 // VERIFICA URL DE VÍDEO
 // ============================================================
 
 function isVideoUrl(value) {
-
   if (typeof value !== 'string') {
     return false;
   }
 
   try {
-
     const parsed = new URL(value);
 
     return (
       VIDEO_HOST_PATTERN.test(parsed.hostname) &&
       VIDEO_URL_PATTERN.test(parsed.href)
     );
-
   } catch {
-
     return false;
-
   }
 }
-
 
 // ============================================================
 // NAVEGADOR REUTILIZÁVEL
@@ -113,11 +101,8 @@ function isVideoUrl(value) {
 let browserPromise = null;
 
 function getBrowser() {
-
   if (!browserPromise) {
-
     browserPromise = puppeteer.launch({
-
       headless: true,
 
       args: [
@@ -126,103 +111,75 @@ function getBrowser() {
         '--disable-dev-shm-usage',
         '--disable-gpu',
       ],
-
     });
-
   }
 
   return browserPromise;
 }
-
 
 // ============================================================
 // EXTRAI video_url + clean_url DE QUALQUER JSON
 // ============================================================
 
 function findVideoData(value, result = {}) {
-
   if (value === null || value === undefined) {
     return result;
   }
-
 
   // ----------------------------------------------------------
   // STRING
   // ----------------------------------------------------------
 
   if (typeof value === 'string') {
-
-    if (
-      !result.video_url &&
-      isVideoUrl(value)
-    ) {
-
+    if (!result.video_url && isVideoUrl(value)) {
       result.video_url = value;
-
     }
 
     return result;
   }
-
 
   // ----------------------------------------------------------
   // ARRAY
   // ----------------------------------------------------------
 
   if (Array.isArray(value)) {
-
     for (const item of value) {
-
       findVideoData(item, result);
 
-      if (
-        result.video_url &&
-        result.clean_url
-      ) {
+      if (result.video_url && result.clean_url) {
         break;
       }
-
     }
 
     return result;
   }
-
 
   // ----------------------------------------------------------
   // OBJETO
   // ----------------------------------------------------------
 
   if (typeof value === 'object') {
-
     // video_url
     if (
       typeof value.video_url === 'string' &&
       isVideoUrl(value.video_url)
     ) {
-
       result.video_url = value.video_url;
-
     }
-
 
     // clean_url
     //
-    // IMPORTANTE:
     // Só usamos se ela realmente existir na resposta.
     //
     if (
       typeof value.clean_url === 'string' &&
       isVideoUrl(value.clean_url)
     ) {
-
       result.clean_url = value.clean_url;
-
     }
-
 
     // Procura em outras propriedades.
     for (const key of Object.keys(value)) {
-
       if (
         key === 'video_url' ||
         key === 'clean_url'
@@ -232,27 +189,20 @@ function findVideoData(value, result = {}) {
 
       findVideoData(value[key], result);
 
-      if (
-        result.video_url &&
-        result.clean_url
-      ) {
+      if (result.video_url && result.clean_url) {
         break;
       }
-
     }
-
   }
 
   return result;
 }
-
 
 // ============================================================
 // TENTA INTERPRETAR TEXTO COMO JSON
 // ============================================================
 
 function parseJsonSafely(text) {
-
   if (
     typeof text !== 'string' ||
     !text.trim()
@@ -261,23 +211,17 @@ function parseJsonSafely(text) {
   }
 
   try {
-
     return JSON.parse(text);
-
   } catch {
-
     return null;
-
   }
 }
-
 
 // ============================================================
 // EXTRATOR PRINCIPAL
 // ============================================================
 
 async function extractVideoFromProductPage(productUrl) {
-
   const browser = await getBrowser();
 
   const context =
@@ -286,7 +230,6 @@ async function extractVideoFromProductPage(productUrl) {
   const page =
     await context.newPage();
 
-
   // ----------------------------------------------------------
   // RESULTADOS
   // ----------------------------------------------------------
@@ -294,29 +237,22 @@ async function extractVideoFromProductPage(productUrl) {
   let foundVideoUrl = null;
   let foundCleanUrl = null;
 
-
   // Evita processar a mesma resposta várias vezes.
   const processedResponses = new WeakSet();
-
 
   let resolveVideoFound;
 
   const videoFoundPromise =
     new Promise((resolve) => {
-
       resolveVideoFound = resolve;
-
     });
-
 
   // ==========================================================
   // ESCUTA TODAS AS RESPOSTAS
   // ==========================================================
 
   page.on('response', async (response) => {
-
     try {
-
       if (
         foundVideoUrl &&
         foundCleanUrl
@@ -324,24 +260,17 @@ async function extractVideoFromProductPage(productUrl) {
         return;
       }
 
-
       const responseUrl =
         response.url();
-
 
       let parsedUrl;
 
       try {
-
         parsedUrl =
           new URL(responseUrl);
-
       } catch {
-
         return;
-
       }
-
 
       // ------------------------------------------------------
       // HEADERS
@@ -355,7 +284,6 @@ async function extractVideoFromProductPage(productUrl) {
           headers['content-type'] || ''
         ).toLowerCase();
 
-
       // ------------------------------------------------------
       // IDENTIFICA info.php
       // ------------------------------------------------------
@@ -365,7 +293,6 @@ async function extractVideoFromProductPage(productUrl) {
           parsedUrl.pathname +
           parsedUrl.search
         );
-
 
       // ------------------------------------------------------
       // IDENTIFICA JSON
@@ -380,20 +307,12 @@ async function extractVideoFromProductPage(productUrl) {
         ) ||
         isInfoPhp;
 
-
       // ------------------------------------------------------
       // TENTA LER RESPOSTA JSON
-      //
-      // O ponto importante aqui é:
-      //
-      // mesmo que info.php retorne JSON com um Content-Type
-      // estranho, nós ainda tentamos interpretar o conteúdo.
       // ------------------------------------------------------
 
       if (looksLikeJson) {
-
         try {
-
           if (
             processedResponses.has(response)
           ) {
@@ -402,28 +321,22 @@ async function extractVideoFromProductPage(productUrl) {
 
           processedResponses.add(response);
 
-
           const text =
             await response.text();
-
 
           if (!text) {
             return;
           }
 
-
           const json =
             parseJsonSafely(text);
-
 
           if (!json) {
             return;
           }
 
-
           const found =
             findVideoData(json);
-
 
           // --------------------------------------------------
           // VIDEO URL
@@ -433,7 +346,6 @@ async function extractVideoFromProductPage(productUrl) {
             found.video_url &&
             !foundVideoUrl
           ) {
-
             foundVideoUrl =
               found.video_url;
 
@@ -441,8 +353,10 @@ async function extractVideoFromProductPage(productUrl) {
               '[EXTRATOR] video_url encontrada'
             );
 
+            console.log(
+              foundVideoUrl
+            );
           }
-
 
           // --------------------------------------------------
           // CLEAN URL
@@ -452,7 +366,6 @@ async function extractVideoFromProductPage(productUrl) {
             found.clean_url &&
             !foundCleanUrl
           ) {
-
             foundCleanUrl =
               found.clean_url;
 
@@ -460,26 +373,21 @@ async function extractVideoFromProductPage(productUrl) {
               '[EXTRATOR] clean_url encontrada'
             );
 
+            console.log(
+              foundCleanUrl
+            );
           }
-
 
           if (foundVideoUrl) {
-
             resolveVideoFound();
-
           }
-
         } catch (error) {
-
           console.log(
             '[EXTRATOR] Não foi possível ler resposta JSON:',
             error.message
           );
-
         }
-
       }
-
 
       // ------------------------------------------------------
       // FALLBACK:
@@ -487,7 +395,6 @@ async function extractVideoFromProductPage(productUrl) {
       // ------------------------------------------------------
 
       if (!foundVideoUrl) {
-
         if (
           VIDEO_HOST_PATTERN.test(
             parsedUrl.hostname
@@ -496,37 +403,29 @@ async function extractVideoFromProductPage(productUrl) {
             responseUrl
           )
         ) {
-
           foundVideoUrl =
             responseUrl;
 
+          console.log(
+            '[EXTRATOR] Vídeo encontrado diretamente:'
+          );
 
           console.log(
-            '[EXTRATOR] Vídeo encontrado diretamente:',
             foundVideoUrl
           );
 
-
           resolveVideoFound();
-
         }
-
       }
-
     } catch (error) {
-
       console.log(
         '[EXTRATOR] Erro processando response:',
         error.message
       );
-
     }
-
   });
 
-
   try {
-
     // ========================================================
     // USER AGENT
     // ========================================================
@@ -537,7 +436,6 @@ async function extractVideoFromProductPage(productUrl) {
       'Chrome/151.0.0.0 Safari/537.36'
     );
 
-
     // ========================================================
     // VIEWPORT
     // ========================================================
@@ -547,27 +445,17 @@ async function extractVideoFromProductPage(productUrl) {
       height: 900,
     });
 
-
     // ========================================================
     // NÃO BLOQUEAMOS CSS/FONTES
-    //
-    // Isso é proposital.
-    // Algumas páginas dependem do carregamento normal para
-    // disparar as requisições do player.
     // ========================================================
 
     await page.setRequestInterception(true);
 
     page.on('request', (request) => {
-
       try {
-
         request.continue();
-
       } catch {}
-
     });
-
 
     // ========================================================
     // ABRE O PRODUTO
@@ -582,24 +470,16 @@ async function extractVideoFromProductPage(productUrl) {
 
     console.log('');
 
-
     await page.goto(productUrl, {
-
       waitUntil: 'networkidle2',
-
       timeout: NAV_TIMEOUT_MS,
-
     });
-
 
     // ========================================================
     // PEQUENO SCROLL
-    //
-    // Alguns players só iniciam quando entram na área visível.
     // ========================================================
 
     await page.evaluate(() => {
-
       window.scrollTo({
         top: Math.max(
           document.body.scrollHeight * 0.35,
@@ -607,9 +487,7 @@ async function extractVideoFromProductPage(productUrl) {
         ),
         behavior: 'instant',
       });
-
     }).catch(() => {});
-
 
     // ========================================================
     // ESPERA AS RESPOSTAS
@@ -619,58 +497,41 @@ async function extractVideoFromProductPage(productUrl) {
       !foundVideoUrl ||
       !foundCleanUrl
     ) {
-
       await Promise.race([
-
         videoFoundPromise,
 
         new Promise((resolve) => {
-
           setTimeout(
             resolve,
             VIDEO_WAIT_MS
           );
-
         }),
-
       ]);
-
     }
-
 
     // ========================================================
     // SEGUNDA ESPERA PARA clean_url
-    //
-    // Se video_url apareceu primeiro, damos mais alguns
-    // segundos para o JSON complementar aparecer.
     // ========================================================
 
     if (
       foundVideoUrl &&
       !foundCleanUrl
     ) {
-
       await new Promise((resolve) => {
-
         setTimeout(
           resolve,
           3000
         );
-
       });
-
     }
-
 
     // ========================================================
     // PROCURA <VIDEO> NA PÁGINA
     // ========================================================
 
     if (!foundVideoUrl) {
-
       const pageVideoUrl =
         await page.evaluate(() => {
-
           const video =
             document.querySelector(
               'video'
@@ -688,27 +549,20 @@ async function extractVideoFromProductPage(productUrl) {
             )?.src ||
             null
           );
-
         });
-
 
       if (
         pageVideoUrl &&
         isVideoUrl(pageVideoUrl)
       ) {
-
         foundVideoUrl =
           pageVideoUrl;
-
 
         console.log(
           '[EXTRATOR] Vídeo encontrado no elemento video.'
         );
-
       }
-
     }
-
 
     // ========================================================
     // TÍTULO + THUMBNAIL
@@ -718,21 +572,17 @@ async function extractVideoFromProductPage(productUrl) {
       title,
       thumbnail,
     } = await page.evaluate(() => {
-
       const ogTitle =
         document.querySelector(
           'meta[property="og:title"]'
         )?.content || null;
-
 
       const ogImage =
         document.querySelector(
           'meta[property="og:image"]'
         )?.content || null;
 
-
       return {
-
         title:
           ogTitle ||
           document.title ||
@@ -741,11 +591,8 @@ async function extractVideoFromProductPage(productUrl) {
         thumbnail:
           ogImage ||
           null,
-
       };
-
     });
-
 
     // ========================================================
     // DIAGNÓSTICO
@@ -809,32 +656,25 @@ async function extractVideoFromProductPage(productUrl) {
 
     console.log('');
 
-
     // ========================================================
     // SEM VÍDEO
     // ========================================================
 
     if (!foundVideoUrl) {
-
       return {
-
         success: false,
 
         error:
           'Não encontramos vídeo nesse produto ' +
           '(ou ele demorou demais para carregar).',
-
       };
-
     }
-
 
     // ========================================================
     // RESPOSTA
     // ========================================================
 
     return {
-
       success: true,
 
       video_url:
@@ -848,44 +688,30 @@ async function extractVideoFromProductPage(productUrl) {
 
       title:
         title,
-
     };
-
-
   } catch (error) {
-
     console.error(
       '[EXTRATOR] ERRO:',
       error
     );
 
-
     return {
-
       success: false,
 
       error:
         'Falha ao carregar a página: ' +
         error.message,
-
     };
-
-
   } finally {
-
     await page
       .close()
       .catch(() => {});
 
-
     await context
       .close()
       .catch(() => {});
-
   }
-
 }
-
 
 // ============================================================
 // ENDPOINT /api/extract
@@ -894,30 +720,23 @@ async function extractVideoFromProductPage(productUrl) {
 app.get(
   '/api/extract',
   async (req, res) => {
-
     const productUrl =
       req.query.url;
-
 
     // --------------------------------------------------------
     // URL AUSENTE
     // --------------------------------------------------------
 
     if (!productUrl) {
-
       return res
         .status(400)
         .json({
-
           success: false,
 
           error:
             'Parâmetro "url" ausente.',
-
         });
-
     }
-
 
     // --------------------------------------------------------
     // URL INVÁLIDA
@@ -928,69 +747,52 @@ app.get(
         productUrl
       )
     ) {
-
       return res
         .status(400)
         .json({
-
           success: false,
 
           error:
             'Link inválido. Cole um link de produto da Shopee.',
-
         });
-
     }
-
 
     // --------------------------------------------------------
     // EXTRAÇÃO
     // --------------------------------------------------------
 
     try {
-
       const result =
         await extractVideoFromProductPage(
           productUrl
         );
-
 
       const status =
         result.success
           ? 200
           : 422;
 
-
       return res
         .status(status)
         .json(result);
-
-
     } catch (error) {
-
       console.error(
         '[API] ERRO INTERNO:',
         error
       );
 
-
       return res
         .status(500)
         .json({
-
           success: false,
 
           error:
             'Erro interno: ' +
             error.message,
-
         });
-
     }
-
   }
 );
-
 
 // ============================================================
 // HEALTH CHECK
@@ -999,19 +801,14 @@ app.get(
 app.get(
   '/health',
   (_req, res) => {
-
     res.json({
-
       ok: true,
 
       service:
         'shopee-video-extractor',
-
     });
-
   }
 );
-
 
 // ============================================================
 // INICIA SERVIDOR
@@ -1020,8 +817,8 @@ app.get(
 app.listen(
   PORT,
   () => {
-
     console.log('');
+
     console.log(
       '=============================================='
     );
@@ -1041,34 +838,25 @@ app.listen(
     console.log(
       '=============================================='
     );
-
   }
 );
-
 
 // ============================================================
 // ENCERRAMENTO
 // ============================================================
 
 async function shutdown() {
-
   try {
-
     if (browserPromise) {
-
       const browser =
         await browserPromise;
 
       await browser.close();
-
     }
-
   } catch {}
 
   process.exit(0);
-
 }
-
 
 process.on(
   'SIGTERM',
