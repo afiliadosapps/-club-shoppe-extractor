@@ -1,0 +1,18 @@
+{
+  "name": "copiarlink-extractor",
+  "version": "1.0.0",
+  "description": "Extrator próprio de vídeos da Shopee usando automação de navegador (Puppeteer)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "puppeteer": "^23.5.0",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
