@@ -48,6 +48,15 @@ const ALLOWED_INPUT_HOSTS = [
 const VIDEO_HOST_PATTERN = /susercontent\.com$/i;
 const VIDEO_URL_PATTERN = /\.(mp4|m3u8)(\?|$)/i;
 
+// O CDN da Shopee guarda o mesmo vídeo em duas variações de nome:
+// uma com um sufixo numérico extra (ex: .16003551772049571.5833.mp4)
+// e uma "base", sem esse sufixo (ex: .mp4). Na prática, a versão
+// "base" costuma vir sem a marca d'água. Isso é só um corte de texto
+// no link que a própria Shopee já entregou — não busca nada novo.
+function toCleanUrl(videoUrl) {
+  return videoUrl.replace(/(\.\d+){1,3}\.mp4(\?.*)?$/i, '.mp4$2');
+}
+
 function isAllowedInputUrl(rawUrl) {
   try {
     const { hostname, protocol } = new URL(rawUrl);
@@ -145,7 +154,13 @@ async function extractVideoFromProductPage(productUrl) {
     });
 
     return foundVideoUrl
-      ? { success: true, video_url: foundVideoUrl, thumbnail, title }
+      ? {
+          success: true,
+          video_url: foundVideoUrl,
+          clean_url: toCleanUrl(foundVideoUrl),
+          thumbnail,
+          title,
+        }
       : { success: false, error: 'Não encontramos vídeo nesse produto (ou ele demorou demais pra carregar).' };
   } catch (err) {
     return { success: false, error: 'Falha ao carregar a página: ' + err.message };
